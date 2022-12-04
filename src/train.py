@@ -18,8 +18,8 @@ from data import DataModule
 
 @click.command()
 @click.option('--model_name_or_path', default='roberta-base', help='Transformers model name.')
-@click.option('--cache_dir', default='./cache', help='The person to greet.')
-@click.option('--data_dir', default='./data', help='The person to greet.')
+@click.option('--cache_dir', default='./cache')
+@click.option('--data_dir', default='./data')
 
 
 class PlausibilityModule(pl.LightningModule):

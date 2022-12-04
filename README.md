@@ -11,4 +11,6 @@ w/ additional pre-processing (spelling corrections and data splits)
 
 Original data from https://github.com/allenai/twentyquestions w/ filtering and pre-processing as described in the paper
 
-Code forthcoming
+## src
+
+To finetune roberta run ``python src/train.py``

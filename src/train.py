@@ -8,18 +8,8 @@ import transformers
 from transformers import AdamW, AutoConfig
 
 from data import DataModule
-<<<<<<< HEAD
 from model.base import PlausibilityModel
 from model.conceptmax import ConceptMax
-from model.conceptinject import ConceptInject
-=======
-
-
-@click.command()
-@click.option('--model_name_or_path', default='roberta-base', help='Transformers model name.')
-@click.option('--cache_dir', default='./cache')
-@click.option('--data_dir', default='./data')
->>>>>>> e06a763... Update train.py
 
 
 class PlausibilityModule(pl.LightningModule):

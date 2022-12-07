@@ -13,4 +13,6 @@ Original data from https://github.com/allenai/twentyquestions w/ filtering and p
 
 ## src
 
+Install requirements: ``pip install -r requirements.txt``
 To finetune roberta run ``python src/train.py``
+Model type can be specified by ``--model_type`` e.g. ``conceptmax``

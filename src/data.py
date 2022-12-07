@@ -1,72 +1,58 @@
 import logging
 import os
-from datetime import datetime
-from typing import Optional
 
 import pandas as pd
 import pytorch_lightning as pl
 import sklearn.model_selection
 import torch
-import transformers
+from transformers import AutoTokenizer
 from torch.utils.data import DataLoader, Dataset
-from tqdm import tqdm
 
 import utils
 
-tqdm.pandas()
-
 
 class WikipediaDataset(Dataset):
-    def __init__(self, examples):
+    def __init__(self, examples, wndata, training):
         self.examples = examples
+        self.wndata = wndata
+        self.training = training
 
     def __len__(self):
-        return len(self.examples['input_ids'])
+        return len(self.examples) * 2
 
     def __getitem__(self, item):
-        return {
-            "input_ids": self.examples["input_ids"][item],
-            "attention_mask": self.examples["attention_mask"][item],
-            "labels": self.examples["labels"][item],
-            }
+        ex = self.examples[item // 2]
+        subj, verb, obj, negative_subj, negative_verb, negative_obj = ex[:6]
+        subj_hyp, obj_hyp, neg_subj_hyp, neg_obj_hyp = ex[6:]
+
+        if item % 2 == 0:
+            return self.wndata.item_to_features(subj, verb, obj,
+                                                subj_hyp, obj_hyp, 1, self.training)
+        else:
+            return self.wndata.item_to_features(negative_subj, negative_verb, negative_obj,
+                                                neg_subj_hyp, neg_obj_hyp, 0, self.training)
 
 
 class PlausibilityDataset(Dataset):
-    def __init__(self, fname, tokenizer):
-        self.examples = utils.read_tsv(fname)
-        self.tokenizer = tokenizer
+    def __init__(self, fname, wndata):
+        self.examples = torch.load(fname)
+        self.wndata = wndata
 
     def __len__(self):
         return len(self.examples)
 
     def __getitem__(self, item):
         ex = self.examples[item]
-        label, subj, verb, obj = ex
-
-        texts = [f'{subj} {verb} {obj}']
+        label, subj, verb, obj, subj_hyp, obj_hyp = ex
         
-        labels = []
-        if label == '1':
-            labels.append([0, 1])
-        else:
-            labels.append([1, 0])
-
-        features = self.tokenizer.batch_encode_plus(
-            texts, max_length=16, padding='max_length', truncation=True,
-            return_tensors='pt'
-        )
-
-        output = {}
-        output['input_ids'] = features['input_ids'][0]
-        output['attention_mask'] = features['attention_mask'][0]
-        output['labels'] = torch.tensor(labels, dtype=torch.float)[0]
-
-        return output
+        return self.wndata.item_to_features(subj, verb, obj,
+                                            subj_hyp, obj_hyp, int(label), False)
 
 
 class DataModule(pl.LightningDataModule):
     def __init__(
         self,
+        model_type: str,
         model_name_or_path: str,
         cache_dir: str,
         data_dir: str,
@@ -76,46 +62,60 @@ class DataModule(pl.LightningDataModule):
         **kwargs,
     ):
         super().__init__()
+        self.model_type = model_type
         self.model_name_or_path = model_name_or_path
         self.max_seq_length = max_seq_length
         self.train_batch_size = train_batch_size
         self.eval_batch_size = eval_batch_size
-        self.tokenizer = transformers.AutoTokenizer.from_pretrained(self.model_name_or_path,
-                                                                    use_fast=True)
         self.cache_dir = cache_dir
         self.data_dir = data_dir
 
     def prepare_data(self):
         """ Parse, preprocess, and cache the datasets. """
         self.prepare_wikipedia_data()
+        self.prepare_plausibility_data()
+        utils.WordNetData(self.data_dir, self.cache_dir,
+                          self.model_type, self.model_name_or_path)
 
     def setup(self, stage: str):
-        print("Setting up data module")
+        logging.info('Setting up data module')
+
+        wndata = utils.WordNetData(self.data_dir, self.cache_dir,
+                                   self.model_type, self.model_name_or_path)
 
         train_fname = os.path.join(self.cache_dir, 'train.pt')
         val_fname   = os.path.join(self.cache_dir, 'val.pt')
+        
+        pep_3k_fname          = os.path.join(self.cache_dir, 'pep_3k_valid.pt')
+        twentyquestions_fname = os.path.join(self.cache_dir, 'twentyquestions_valid.pt')
 
         self.dataset = {}
-        self.dataset['train'] = WikipediaDataset(torch.load(train_fname))
-        self.dataset['validation'] = WikipediaDataset(torch.load(val_fname))
-
+        self.dataset['train'] = WikipediaDataset(torch.load(train_fname), wndata, True)
+        self.dataset['val'] = WikipediaDataset(torch.load(val_fname), wndata, False)
+        
+        self.dataset['pep_3k_valid'] = PlausibilityDataset(pep_3k_fname, wndata)
+        self.dataset['twentyquestions_valid'] = PlausibilityDataset(twentyquestions_fname, wndata)
 
     def train_dataloader(self):
         return DataLoader(
             self.dataset['train'],
             batch_size=self.train_batch_size,
-            shuffle=True
+            shuffle=True,
+            num_workers=10,
+            collate_fn=utils.collate_batch
         )
 
     def val_dataloader(self):
-        pep_3k_dir = os.path.join(self.data_dir, 'pep_3k', 'valid.tsv')
-        twentyquestions_dir = os.path.join(self.data_dir, 'twentyquestions', 'valid.tsv')
         return [
-                    DataLoader(self.dataset['validation'], batch_size=self.eval_batch_size),
-                    DataLoader(PlausibilityDataset(pep_3k_dir, self.tokenizer),
-                                batch_size=self.eval_batch_size),
-                    DataLoader(PlausibilityDataset(twentyquestions_dir, self.tokenizer),
-                                batch_size=self.eval_batch_size),
+                    DataLoader(self.dataset['val'],
+                               batch_size=self.eval_batch_size,
+                               collate_fn=utils.collate_batch),
+                    DataLoader(self.dataset['pep_3k_valid'],
+                               batch_size=self.eval_batch_size,
+                               collate_fn=utils.collate_batch),
+                    DataLoader(self.dataset['twentyquestions_valid'],
+                               batch_size=self.eval_batch_size,
+                               collate_fn=utils.collate_batch),
         ]
 
     def prepare_wikipedia_data(self):
@@ -124,41 +124,32 @@ class DataModule(pl.LightningDataModule):
         val_fname   = os.path.join(self.cache_dir, 'val.pt')
         if os.path.exists(train_fname) and os.path.exists(val_fname):
             return
-            
-        logging.info("Preprocessing Wikipedia data.")
+
+        logging.info('Preprocessing Wikipedia data.')
 
         fname = os.path.join(self.data_dir, 'english_wikipedia', 'train.parquet')
         df = pd.read_parquet(fname)
         train_df, val_df = sklearn.model_selection.train_test_split(df,
-                                                                    train_size=1000000,
                                                                     test_size=1000,
                                                                     random_state=0)
 
-        self.tokenize_and_cache_df(train_df, train_fname)
-        self.tokenize_and_cache_df(val_df, val_fname)
+        utils.cache_df(train_df, train_fname)
+        utils.cache_df(val_df, val_fname)
 
-    def tokenize_and_cache_df(self, df, fname):
-        logging.info('Merging columns of dataframe.')
-        df['svo'] = df[['subject', 'verb', 'object']].progress_apply(' '.join, axis=1)
-        df['neg_svo'] = df[['negative_subject', 'verb', 'negative_object']].progress_apply(' '.join, axis=1)
+    def prepare_plausibility_data(self):
+        for dataset in ['pep_3k', 'twentyquestions']:
+            for split in ['valid', 'test']:
+                self.prepare_plausibility_dataset(dataset, split)
 
-        logging.info('Tokenizing texts.')
-        texts = df['svo'].tolist() + df['neg_svo'].tolist()
-        features = self.convert_to_features(texts)
-
-        num_rows = df.shape[0]
-        labels = torch.zeros((num_rows * 2, 2), dtype=torch.float)
-        labels[:num_rows,1] = 1.0
-        labels[num_rows:,0] = 1.0
-        features['labels'] = labels
-
-        logging.info('Saving cached data to: %s', fname)
-        torch.save(features, fname)
-
-
-    def convert_to_features(self, texts):
-        features = self.tokenizer.batch_encode_plus(
-            texts, max_length=self.max_seq_length, padding='max_length', truncation=True,
-            return_tensors='pt'
-        )
-        return features
+    def prepare_plausibility_dataset(self, dataset, split):
+        cache_fname = os.path.join(self.cache_dir, f'{dataset}_{split}.pt')
+        if os.path.exists(cache_fname):
+            return
+        
+        data_fname   = os.path.join(self.data_dir, dataset, f'{split}.tsv')
+        senses_fname = os.path.join(self.data_dir, dataset, f'{split}_senses.tsv')
+        examples = utils.read_tsv(data_fname)
+        senses   = utils.read_tsv(senses_fname)
+        data = [ex + sense for ex, sense in zip(examples, senses)]
+        
+        torch.save(data, cache_fname)

@@ -2,10 +2,10 @@
 
 ## Data
 
-Download `data.zip` from [this Google Drive directory](https://drive.google.com/drive/folders/1KTKjVtb4xZ5TqFFQJq18OQl0_Pmso_qC?usp=sharing) and place the `./data` folder in the project directory. You can also place the data in a different location which must be referenced using the `--data_dir` argument.
+Download `data.zip` from [this Google Drive directory](https://drive.google.com/drive/folders/1KTKjVtb4xZ5TqFFQJq18OQl0_Pmso_qC?usp=sharing) and place the `./data` folder in the project directory. You can also place the data in a different location which must be specified using the `--data_dir` argument.
 
 This directory contains:
-1. Wikipedia training data as a parquet (pyarrow) table. Each row is a training example with an uttered s-v-o triple and it's corresponding pseudo-negative. Specifcally, the columns are ```(subject verb object negative_subject negative_verb negative_object subject_synset object_synset negative_subject_synset negative_object_synset)``` where synsets are those disambiguated using BERT-WSD.
+1. Wikipedia training data as a parquet (pyarrow) table. Each row is a training example with an uttered s-v-o triple and it's corresponding pseudo-negative. Specifically, the columns are ```(subject verb object negative_subject negative_verb negative_object subject_synset object_synset negative_subject_synset negative_object_synset)``` where synsets are those disambiguated using BERT-WSD.
 1. Plausibility judgements for evaluation (PEP-3K and Twenty Questions) in `.tsv` format.
 1. Filtered WordNet saved a `.tsv` files. `lemma2synsets` is a mapping from lemmas to corresponding synsets. `synset2hc` is a mapping from synset to hypernym chain. `synset2lemma` is a mapping from synset to lemma.
 
